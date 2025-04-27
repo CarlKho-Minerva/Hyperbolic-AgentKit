@@ -41,6 +41,15 @@ async def fetch_marketplace_data(
         "region-1": "US, North America",
         # Add more mappings as needed
     }
+
+    def format_memory(mb):
+        if mb >= 1024 * 1024:
+            return f"{mb / (1024 * 1024):.2f} TB"
+        elif mb >= 1024:
+            return f"{mb / 1024:.2f} GB"
+        else:
+            return f"{mb} MB"
+
     async with aiohttp.ClientSession() as session:
         try:
             url = "https://api.hyperbolic.xyz/v1/marketplace"
@@ -53,12 +62,11 @@ async def fetch_marketplace_data(
                     marketplace_data = await response.json()
                     available_instances = [
                         {
-                            "id": instance["id"],
+                            # Only mention GPU model, memory, price, location, and availability
+                            # "id": instance["id"],
                             "gpu_model": instance["hardware"]["gpus"][0]["model"],
-                            "gpu_memory": instance["hardware"]["gpus"][0]["ram"],
-                            # Convert price from cents to dollars and format as string
+                            "gpu_memory": format_memory(instance["hardware"]["gpus"][0]["ram"]),
                             "price_per_hour": f"${instance['pricing']['price']['amount'] / 100:.2f}",
-                            # Map region code to friendly name
                             "location": REGION_MAP.get(instance["location"]["region"], instance["location"]["region"]),
                             "available": not instance["reserved"]
                             and instance["gpus_reserved"] < instance["gpus_total"],
@@ -105,8 +113,8 @@ You have access to the marketplace data through the get_available_gpus tool. Whe
 or specifications, use this tool to get the most current information.
 
 Always be professional and helpful. When listing GPUs:
-1. Mention the GPU model, memory, and hourly price
-2. Indicate if the instance is currently available
+1. Mention if the instance is currently available first
+2. Then mention the GPU model, memory, and hourly price
 3. Include the location/region
 
 If users ask about specific GPU models or price ranges, filter and highlight the relevant options from the data.
