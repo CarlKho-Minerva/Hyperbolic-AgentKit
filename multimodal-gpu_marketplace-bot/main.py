@@ -29,6 +29,7 @@ from pipecat.services.gemini_multimodal_live.gemini import (
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 from marketplace import fetch_marketplace_data
 from config import SYSTEM_INSTRUCTION, TOOLS
+from tools import get_tool_declarations, register_all_tools
 
 load_dotenv(override=True)
 
@@ -59,10 +60,10 @@ async def main():
         llm = GeminiMultimodalLiveLLMService(
             api_key=os.getenv("GOOGLE_API_KEY"),
             system_instruction=SYSTEM_INSTRUCTION,
-            tools=TOOLS,
+            tools=get_tool_declarations(),
         )
 
-        llm.register_function("get_available_gpus", fetch_marketplace_data)
+        register_all_tools(llm)
 
         context = OpenAILLMContext(
             [
