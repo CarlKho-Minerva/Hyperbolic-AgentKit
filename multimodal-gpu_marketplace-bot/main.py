@@ -27,8 +27,7 @@ from pipecat.services.gemini_multimodal_live.gemini import (
     GeminiMultimodalLiveLLMService,
 )
 from pipecat.transports.services.daily import DailyParams, DailyTransport
-from marketplace import fetch_marketplace_data
-from config import SYSTEM_INSTRUCTION, TOOLS
+from config import SYSTEM_INSTRUCTION, LLMCONTEXT_CONTENT
 from tools import get_tool_declarations, register_all_tools
 
 load_dotenv(override=True)
@@ -61,6 +60,9 @@ async def main():
             api_key=os.getenv("GOOGLE_API_KEY"),
             system_instruction=SYSTEM_INSTRUCTION,
             tools=get_tool_declarations(),
+            transcribe_user_audio=True,
+            transcribe_model_audio=True,
+            inference_on_context_initialization=True,
         )
 
         register_all_tools(llm)
@@ -69,7 +71,7 @@ async def main():
             [
                 {
                     "role": "user",
-                    "content": "Start by greeting me warmly and introducing me to GPU Rentals by Hyperbolic Labs and mention that you can do everything verbally. Encourage me to start by asking available GPU. Also mention that you can help me with my use case and suggest the best GPU for my needs.",
+                    "content": LLMCONTEXT_CONTENT,
                 }
             ],
         )
@@ -97,6 +99,20 @@ async def main():
         @transport.event_handler("on_first_participant_joined")
         async def on_first_participant_joined(transport, participant):
             await task.queue_frames([context_aggregator.user().get_context_frame()])
+            await asyncio.sleep(3)
+            await transport.capture_participant_video(
+                participant["id"], framerate=1, video_source="screenVideo"
+            )
+            await transport.capture_participant_video(
+                participant["id"], framerate=1, video_source="camera"
+            )
+
+
+            logger.debug("Unpausing audio and video")
+            llm.set_audio_input_paused(False)
+            llm.set_video_input_paused(False)
+
+
 
         runner = PipelineRunner()
 
