@@ -37,6 +37,10 @@ logger.add(sys.stderr, level="DEBUG")
 async def fetch_marketplace_data(
     function_name, tool_call_id, args, llm, context, result_callback
 ):
+    REGION_MAP = {
+        "region-1": "US, North America",
+        # Add more mappings as needed
+    }
     async with aiohttp.ClientSession() as session:
         try:
             url = "https://api.hyperbolic.xyz/v1/marketplace"
@@ -52,8 +56,10 @@ async def fetch_marketplace_data(
                             "id": instance["id"],
                             "gpu_model": instance["hardware"]["gpus"][0]["model"],
                             "gpu_memory": instance["hardware"]["gpus"][0]["ram"],
-                            "price_per_hour": instance["pricing"]["price"]["amount"],
-                            "location": instance["location"]["region"],
+                            # Convert price from cents to dollars and format as string
+                            "price_per_hour": f"${instance['pricing']['price']['amount'] / 100:.2f}",
+                            # Map region code to friendly name
+                            "location": REGION_MAP.get(instance["location"]["region"], instance["location"]["region"]),
                             "available": not instance["reserved"]
                             and instance["gpus_reserved"] < instance["gpus_total"],
                         }
