@@ -1,63 +1,86 @@
 import os
 import sys
+import uuid
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
-import time
+from datetime import datetime
 import json
 from typing import List, Dict, Any, Optional
 import random
 import asyncio
+import warnings
 
+# Import prompts
+from base_utils.prompts import (
+    PODCAST_QUERY_PROMPT,
+    PODCAST_TOPICS,
+    PODCAST_ASPECTS,
+    BASIC_QUERY_TEMPLATES
+)
+from base_utils.tooldescriptions import (
+    TWITTER_REPLY_CHECK_DESCRIPTION,
+    TWITTER_ADD_REPLIED_DESCRIPTION,
+    TWITTER_REPOST_CHECK_DESCRIPTION,
+    TWITTER_ADD_REPOSTED_DESCRIPTION,
+    TWITTER_KNOWLEDGE_BASE_DESCRIPTION,
+    PODCAST_KNOWLEDGE_BASE_DESCRIPTION,
+    WEB_SEARCH_DESCRIPTION
+)
 
 # Load environment variables from .env file
 load_dotenv(override=True)
-load_dotenv(override=True)
 
-# Add the parent directory to PYTHONPATH
-# Add the parent directory to PYTHONPATH
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
+
 current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 
 from langchain_core.messages import HumanMessage
-# from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-# from langchain_nomic.embeddings import NomicEmbeddings
-# from langchain_openai import ChatOpenAI, OpenAIEmbeddings
-# from langchain_nomic.embeddings import NomicEmbeddings
 from langchain_anthropic import ChatAnthropic
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 from langchain_community.tools import DuckDuckGoSearchRun
 from langchain_community.agent_toolkits.openapi.toolkit import RequestsToolkit
 from langchain_community.utilities.requests import TextRequestsWrapper
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
-# from langchain_community.document_loaders import WebBaseLoader
-# from langchain_community.vectorstores import SKLearnVectorStore
 from langchain.tools import Tool
 from langchain_core.runnables import RunnableConfig
+from browser_agent import BrowserToolkit
 
-# Import CDP related modules
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
-# from langchain_community.document_loaders import WebBaseLoader
-# from langchain_community.vectorstores import SKLearnVectorStore
-from langchain.tools import Tool
-from langchain_core.runnables import RunnableConfig
+# Import Coinbase AgentKit related modules
+from coinbase_agentkit import (
+    AgentKit,
+    AgentKitConfig,
+    CdpWalletProvider,
+    CdpWalletProviderConfig,
+    cdp_api_action_provider,
+    cdp_wallet_action_provider,
+    erc20_action_provider,
+    pyth_action_provider,
+    wallet_action_provider,
+    weth_action_provider,
+    twitter_action_provider,
+)
+from coinbase_agentkit_langchain import get_langchain_tools
 
-# Import CDP related modules
-from cdp_langchain.agent_toolkits import CdpToolkit
-from cdp_langchain.utils import CdpAgentkitWrapper
-from cdp_langchain.tools import CdpTool
-from pydantic import BaseModel, Field
-from cdp import Wallet
-
-# Import Hyperbolic related modules
 # Import Hyperbolic related modules
 from hyperbolic_langchain.agent_toolkits import HyperbolicToolkit
 from hyperbolic_langchain.utils import HyperbolicAgentkitWrapper
-from twitter_langchain import TwitterApiWrapper, TwitterToolkit
-from custom_twitter_actions import create_delete_tweet_tool, create_get_user_id_tool, create_get_user_tweets_tool, create_retweet_tool
+
+# Import Twitter-related modules
+from twitter_agent.custom_twitter_actions import (
+    TwitterClient,
+    create_delete_tweet_tool,
+    create_get_user_id_tool,
+    create_get_user_tweets_tool,
+    create_retweet_tool
+)
+from twitter_agent.twitter_state import TwitterState, MENTION_CHECK_INTERVAL, MAX_MENTIONS_PER_INTERVAL
+from twitter_agent.twitter_knowledge_base import TweetKnowledgeBase, update_knowledge_base
+
+from github_agent.custom_github_actions import GitHubAPIWrapper, create_evaluate_profiles_tool
 
 # Import local modules
-from utils import (
+from base_utils.utils import (
     Colors, 
     print_ai, 
     print_system, 
@@ -66,10 +89,10 @@ from utils import (
     run_with_progress, 
     format_ai_message_content
 )
-from twitter_state import TwitterState, MENTION_CHECK_INTERVAL, MAX_MENTIONS_PER_INTERVAL
-from twitter_knowledge_base import TweetKnowledgeBase, Tweet, update_knowledge_base
-from langchain_core.runnables import RunnableConfig
 from podcast_agent.podcast_knowledge_base import PodcastKnowledgeBase
+
+# Add the import for WritingTool near the other imports at the top of the file
+from writing_agent.writing_tool import WritingTool
 
 async def generate_llm_podcast_query(llm: ChatAnthropic = None) -> str:
     """
@@ -84,73 +107,12 @@ async def generate_llm_podcast_query(llm: ChatAnthropic = None) -> str:
     """
     llm = ChatAnthropic(model="claude-3-5-haiku-20241022")
     
-    # Define topic areas and aspects to consider
-    topics = [
-        # Scaling & Infrastructure
-        "horizontal scaling challenges", "decentralization vs scalability tradeoffs",
-        "infrastructure evolution", "restaking models and implementation",
-        
-        # Technical Architecture  
-        "layer 2 solutions and rollups", "node operations", "geographic distribution",
-        "decentralized service deployment",
-        
-        # Ecosystem Development
-        "market coordination mechanisms", "operator and staker dynamics", 
-        "blockchain platform evolution", "community bootstrapping",
-        
-        # Future Trends
-        "ecosystem maturation", "market maker emergence",
-        "strategy optimization", "service coordination",
-        
-        # Web3 Infrastructure
-        "decentralized vs centralized solutions", "cloud provider comparisons",
-        "resilience and reliability", "infrastructure distribution",
-        
-        # Market Dynamics
-        "marketplace design", "coordination mechanisms",
-        "efficient frontier development", "ecosystem player roles"
-    ]
+    # Format the prompt with random selections
+    prompt = PODCAST_QUERY_PROMPT.format(
+        topics=random.sample(PODCAST_TOPICS, 3),
+        aspects=random.sample(PODCAST_ASPECTS, 2)
+    )
     
-    aspects = [
-        # Technical
-        "infrastructure scalability", "technical implementation challenges",
-        "architectural tradeoffs", "system reliability",
-        
-        # Market & Economics
-        "market efficiency", "economic incentives",
-        "stakeholder dynamics", "value capture mechanisms",
-        
-        # Development
-        "platform evolution", "ecosystem growth",
-        "adoption patterns", "integration challenges",
-        
-        # Strategy
-        "optimization approaches", "competitive dynamics",
-        "strategic positioning", "risk management"
-    ]
-    
-    # Create a dynamic prompt that encourages creative query generation
-    prompt = f"""
-    Generate ONE focused query about Web3 technology to search crypto podcast transcripts.
-
-    Consider these elements (but focus on just ONE):
-    - Core Topics: {random.sample(topics, 3)}
-    - Key Aspects: {random.sample(aspects, 2)}
-
-    Requirements for the query:
-    1. Focus on just ONE specific technical aspect or challenge from the above
-    2. Keep the scope narrow and focused
-    3. Use simple, clear language
-    4. Aim for 10-15 words
-    5. Ask about concrete technical details rather than abstract concepts
-    
-    Example good queries:
-    - "What are the main challenges operators face when running rollup nodes?"
-    - "How do layer 2 solutions handle data availability?"
-    - "What infrastructure requirements do validators need for running nodes?"
-
-    Generate exactly ONE query that meets these criteria. Return ONLY the query text, nothing else.
-    """
     # Get response from LLM
     response = await llm.ainvoke([HumanMessage(content=prompt)])
     query = response.content.strip()
@@ -163,14 +125,7 @@ async def generate_llm_podcast_query(llm: ChatAnthropic = None) -> str:
 # Legacy function for fallback
 def generate_basic_podcast_query() -> str:
     """Legacy function that returns a basic template query as fallback."""
-    query_templates = [
-        "What are the key insights from recent podcast discussions?",
-        "What emerging trends were highlighted in recent episodes?",
-        "What expert predictions were made about the crypto market?",
-        "What innovative blockchain use cases were discussed recently?",
-        "What regulatory developments were analyzed in recent episodes?"
-    ]
-    return random.choice(query_templates)
+    return random.choice(BASIC_QUERY_TEMPLATES)
 
 async def generate_podcast_query() -> str:
     """
@@ -191,77 +146,6 @@ async def generate_podcast_query() -> str:
         # Fallback to basic template
         return generate_basic_podcast_query()
 
-async def enhance_result(initial_query: str, query_result: str, llm: ChatAnthropic = None) -> str:
-    """
-    Analyzes the initial query and its results to generate an enhanced follow-up query.
-    
-    Args:
-        initial_query: The original query used to get podcast insights
-        query_result: The result/response obtained from the knowledge base
-        llm: ChatAnthropic instance. If None, creates a new one.
-        
-    Returns:
-        str: An enhanced follow-up query
-    """
-    if llm is None:
-        llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
-    
-    analysis_prompt = f"""
-    As an AI specializing in podcast content analysis, analyze this query and its results to generate a more focused follow-up query.
-
-    <initial_query>
-    {initial_query}
-    </initial_query>
-
-    <query_result>
-    {query_result}
-    </query_result>
-
-    Your task:
-    1. Analyze the relationship between the query and its results
-    2. Identify any:
-       - Unexplored angles
-       - Interesting tangents
-       - Deeper technical aspects
-       - Missing context
-       - Potential contradictions
-       - Novel connections
-    3. Generate a follow-up query that:
-       - Builds upon the most interesting insights
-       - Explores identified gaps
-       - Dives deeper into promising areas
-       - Connects different concepts
-       - Challenges assumptions
-       - Seeks practical applications
-
-    Requirements for the enhanced query:
-    1. Must be more specific than the initial query
-    2. Should target unexplored aspects revealed in the results
-    3. Must maintain relevance to blockchain/crypto
-    4. Should encourage detailed technical or analytical responses
-    5. Must be a single, clear question
-    6. Should lead to actionable insights
-
-    Return ONLY the enhanced follow-up query, nothing else.
-    Make it unique and substantially different from the initial query.
-    """
-    
-    try:
-        # Get response from LLM
-        response = await llm.ainvoke([HumanMessage(content=analysis_prompt)])
-        enhanced_query = response.content.strip()
-        
-        # Clean up the query
-        enhanced_query = enhanced_query.replace('"', '').replace('Query:', '').strip()
-        
-        print_system(f"Enhanced query generated: {enhanced_query}")
-        return enhanced_query
-        
-    except Exception as e:
-        print_error(f"Error generating enhanced query: {e}")
-        # Return a modified version of the original query as fallback
-        return f"Regarding {initial_query.split()[0:3].join(' ')}, what are the deeper technical implications?"
-
 # Constants
 ALLOW_DANGEROUS_REQUEST = True  # Set to False in production for security
 wallet_data_file = "wallet_data.txt"
@@ -274,97 +158,26 @@ twitter_state = TwitterState()
 check_replied_tool = Tool(
     name="has_replied_to",
     func=twitter_state.has_replied_to,
-    description="Check if we have already replied to a tweet. Input should be a tweet ID string."
+    description=TWITTER_REPLY_CHECK_DESCRIPTION
 )
 
 add_replied_tool = Tool(
     name="add_replied_to",
     func=twitter_state.add_replied_tweet,
-    description="Add a tweet ID to the database of replied tweets."
+    description=TWITTER_ADD_REPLIED_DESCRIPTION
 )
 
 check_reposted_tool = Tool(
     name="has_reposted",
     func=twitter_state.has_reposted,
-    description="Check if we have already reposted a tweet. Input should be a tweet ID string."
+    description=TWITTER_REPOST_CHECK_DESCRIPTION
 )
 
 add_reposted_tool = Tool(
     name="add_reposted",
     func=twitter_state.add_reposted_tweet,
-    description="Add a tweet ID to the database of reposted tweets."
+    description=TWITTER_ADD_REPOSTED_DESCRIPTION
 )
-
-# # Knowledge base setup
-# urls = [
-#     "https://docs.prylabs.network/docs/monitoring/checking-status",
-# ]
-
-# # Load and process documents
-# docs = [WebBaseLoader(url).load() for url in urls]
-# docs_list = [item for sublist in docs for item in sublist]
-# # Load and process documents
-# docs = [WebBaseLoader(url).load() for url in urls]
-# docs_list = [item for sublist in docs for item in sublist]
-
-# text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-#     chunk_size=1000, chunk_overlap=200
-# )
-# doc_splits = text_splitter.split_documents(docs_list)
-# text_splitter = RecursiveCharacterTextSplitter.from_tiktoken_encoder(
-#     chunk_size=1000, chunk_overlap=200
-# )
-# doc_splits = text_splitter.split_documents(docs_list)
-
-# vectorstore = SKLearnVectorStore.from_documents(
-#     documents=doc_splits,
-#     embedding=OpenAIEmbeddings(model="text-embedding-3-small"),
-# )
-# vectorstore = SKLearnVectorStore.from_documents(
-#     documents=doc_splits,
-#     embedding=OpenAIEmbeddings(model="text-embedding-3-small"),
-# )
-
-# retriever = vectorstore.as_retriever(k=3)
-# retriever = vectorstore.as_retriever(k=3)
-
-# retrieval_tool = Tool(
-#     name="retrieval_tool",
-#     description="Useful for retrieving information from the knowledge base about running Ethereum operations.",
-#     func=retriever.get_relevant_documents
-# )
-# retrieval_tool = Tool(
-#     name="retrieval_tool",
-#     description="Useful for retrieving information from the knowledge base about running Ethereum operations.",
-#     func=retriever.get_relevant_documents
-# )
-
-# Multi-token deployment setup
-# Multi-token deployment setup
-DEPLOY_MULTITOKEN_PROMPT = """
-This tool deploys a new multi-token contract with a specified base URI for token metadata.
-The base URI should be a template URL containing {id} which will be replaced with the token ID.
-For example: 'https://example.com/metadata/{id}.json'
-"""
-
-class DeployMultiTokenInput(BaseModel):
-    """Input argument schema for deploy multi-token contract action."""
-    base_uri: str = Field(
-        ...,
-        description="The base URI template for token metadata. Must contain {id} placeholder.",
-        example="https://example.com/metadata/{id}.json"
-    )
-
-def deploy_multi_token(wallet: Wallet, base_uri: str) -> str:
-    """Deploy a new multi-token contract with the specified base URI."""
-    """Deploy a new multi-token contract with the specified base URI."""
-    if "{id}" not in base_uri:
-        raise ValueError("base_uri must contain {id} placeholder")
-    
-    
-    deployed_contract = wallet.deploy_multi_token(base_uri)
-    result = deployed_contract.wait()
-    return f"Successfully deployed multi-token contract at address: {result.contract_address}"
 
 def loadCharacters(charactersArg: str) -> List[Dict[str, Any]]:
     """Load character files and return their configurations."""
@@ -373,7 +186,7 @@ def loadCharacters(charactersArg: str) -> List[Dict[str, Any]]:
 
     if not characterPaths:
         # Load default chainyoda character
-        default_path = os.path.join(os.path.dirname(__file__), "characters/chainyoda.json")
+        default_path = os.path.join(os.path.dirname(__file__), "characters/default.json")
         characterPaths.append(default_path)
 
     for characterPath in characterPaths:
@@ -403,8 +216,7 @@ def loadCharacters(charactersArg: str) -> List[Dict[str, Any]]:
 
 def process_character_config(character: Dict[str, Any]) -> str:
     """Process character configuration into agent personality."""
-    
-    # Format bio and lore
+    # Extract core character elements
     bio = "\n".join([f"- {item}" for item in character.get('bio', [])])
     lore = "\n".join([f"- {item}" for item in character.get('lore', [])])
     knowledge = "\n".join([f"- {item}" for item in character.get('knowledge', [])])
@@ -420,178 +232,171 @@ def process_character_config(character: Dict[str, Any]) -> str:
     # style_chat = "\n".join([f"- {item}" for item in character.get('style', {}).get('chat', [])])
     # style_post = "\n".join([f"- {item}" for item in character.get('style', {}).get('post', [])])
 
-    # Randomly select 10 post examples
+    # Select and format post examples
     all_posts = character.get('postExamples', [])
     selected_posts = random.sample(all_posts, min(10, len(all_posts)))
-    
     post_examples = "\n".join([
         f"Example {i+1}: {post}"
         for i, post in enumerate(selected_posts)
         if isinstance(post, str) and post.strip()
     ])
-    
-    # Compile personality prompt
+
     personality = f"""
-        Here are examples of your previous posts:
+    Here are examples of your previous posts:
+    <post_examples>
+    {post_examples}
+    </post_examples>
 
-        <post_examples>
-        {post_examples}
-        </post_examples>
-        
-        You are an AI character designed to interact on social media, particularly Twitter, in the blockchain and cryptocurrency space. Your personality, knowledge, and capabilities are defined by the following information:
+    You are an AI character designed to interact on social media with this configuration:
 
-        <character_bio>
-        {bio}
-        </character_bio>
+    <character_bio>
+    {bio}
+    </character_bio>
 
-        <character_lore>
-        {lore}
-        </character_lore>
+    <character_lore>
+    {lore}
+    </character_lore>
 
-        <character_knowledge>
-        {knowledge}
-        </character_knowledge>
+    <character_knowledge>
+    {knowledge}
+    </character_knowledge>
 
-        <character_adjectives>
-        {adjectives}
-        </character_adjectives>
+    <character_adjectives>
+    {adjectives}
+    </character_adjectives>
 
-        Here is the list of Key Opinion Leaders (KOLs) to interact with:
+    <kol_list>
+    {kol_list}
+    </kol_list>
 
-        <kol_list>
-        {kol_list}
-        </kol_list>
+    <style_guidelines>
+    {style_all}
+    </style_guidelines>
 
-        When communicating, adhere to these style guidelines:
-
-        <style_guidelines>
-        {style_all}
-        </style_guidelines>
-
-        Focus on these topics:
-
-        <topics>
-        {topics}
-        </topics>
-
-        Your core capabilities include:
-
-        1. Blockchain Operations (via Coinbase Developer Platform - CDP):
-        - Interact onchain
-        - Deploy and manage tokens and wallets
-        - Request funds from faucet on network ID `base-sepolia`
-
-        2. Compute Operations (via Hyperbolic):
-        - Rent compute resources
-        - Check GPU status and availability
-        - Connect to remote servers via SSH (use ssh_connect)
-        - Execute commands on remote server (use remote_shell)
-
-        3. System Operations:
-        - Check SSH connection status with 'ssh_status'
-        - Search the internet for current information
-        - Post updates on X (Twitter)
-        - Monitor and respond to mentions
-        - Track replied tweets in database
-
-        4. Knowledge Base Access:
-        - Use DuckDuckGoSearchRun web_search tool for current information
-        - Query Ethereum operations documentation
-        - Access real-time blockchain information
-        - Retrieve relevant technical documentation
-
-        5. Twitter Interaction with Key Opinion Leaders (KOLs):
-        - Find user IDs using get_user_id_tool
-        - Retrieve tweets using user_tweets_tool
-        - Reply to the most recent tweet of the selected KOL
-
-        Important guidelines:
-        1. Always stay in character
-        2. Use your knowledge and capabilities appropriately
-        3. Maintain consistent personality traits
-        4. Follow style guidelines for all communications
-        5. Use tools and capabilities when needed
-        6. Do not reply to spam or bot mentions
-        7. Ensure all tweets are less than 280 characters
-        8. Vary your response style:
-        - Generally use punchy one-liners (< 100 characters preferred)
-        - Occasionally provide longer, more insightful posts
-        - Sometimes use bullet points for clarity
-        9. Respond directly to the core point
-        10. Use emojis sparingly and naturally, not in every tweet
-        11. Verify response relevance before posting:
-            - Must reference specific blockchain/project if mentioned
-            - Must directly address KOL's main point
-            - Must match approved topics list
-        12. No multi-part threads or responses
-        13. Avoid qualifying statements or hedging language
-        14. Check each response against filters:
-            - Character limit adhered to
-            - Contains relevant keyword
-            - Directly matches conversation topic
-            - Appropriate emoji usage (if any)
-
-        When using tools:
-        1. Check if you've replied to tweets using has_replied_to
-        2. Track replied tweets using add_replied_to
-        3. Check if you've reposted tweets using has_reposted
-        4. Track reposted tweets using add_reposted
-        5. Use retrieval_tool for Ethereum documentation
-        6. Use get_user_id_tool to find KOL user IDs
-        7. Use user_tweets_tool to retrieve KOL tweets
-
-        Before responding to any input, analyze the situation and plan your response in <response_planning> tags:
-        1. Determine if the input is a mention or a regular message
-        2. Identify the specific topic or context of the input
-        3. List relevant character traits and knowledge that apply to the current situation:
-        - Specify traits from the character bio that are relevant
-        - Note any lore or knowledge that directly applies
-        4. Consider potential tool usage:
-        - Identify which tools might be needed
-        - List required parameters for each tool and check if they're available in the input
-        5. Plan the response:
-        - Outline key points to include
-        - Decide on an appropriate length and style (one-liner, longer insight, or bullet points)
-        - Consider whether an emoji is appropriate for this specific response
-        - Ensure the planned response aligns with the character's persona and style guidelines
-        6. If interacting with KOLs:
-        a. Plan to find their user IDs using get_user_id_tool
-        b. Plan to retrieve their recent tweets using user_tweets_tool
-        c. Ensure your planned response will be directly relevant to their tweet
-        d. Plan to check if you have already replied using has_replied_to
-        e. If you haven't replied, plan to use reply_to_tweet; otherwise, choose a different tweet
-        f. Plan to use add_replied_to after replying to store the tweet ID
-        7. Draft and refine the response:
-        - Write out a draft of the response
-        - Check that it meets all guidelines (character limit, relevance, style, etc.)
-        - Adjust the response if necessary to meet all requirements
-
-        After your analysis, provide your response in <response> tags.
-
-        Example output structure:
-
-        <response_planning>
-        [Your detailed analysis of the situation and planning of the response]
-        </response_planning>
-
-        <response>
-        [Your character's response, ensuring it adheres to the guidelines]
-        </response>
-
-        Remember:
-        - If you're asked about current information and hit a rate limit on web_search, do not reply and wait until the next mention check.
-        - When interacting with KOLs, ensure you're responding to their most recent tweets and maintaining your character's persona.
-        - Always verify that you have all required parameters before calling any tools.
-        - Vary your tweet length and style based on the context and importance of the message.
-        - Use emojis naturally and sparingly, not in every tweet.
-        - Double-check the word count of your response and adjust if necessary to meet the character limit.
-        """
-
-    # print_system(personality)
+    <topics>
+    {topics}
+    </topics>
+    """
 
     return personality
 
+def create_agent_tools(llm, knowledge_base, podcast_knowledge_base, agent_kit, config):
+    """Create and return a list of tools for the agent to use."""
+    tools = []
 
+    # Add browser toolkit if enabled
+    if os.getenv("USE_BROWSER_TOOLS", "true").lower() == "true":
+        browser_toolkit = BrowserToolkit.from_llm(llm)
+        tools.extend(browser_toolkit.get_tools())
+
+    # Add Writing Agent Tools if enabled
+    if os.getenv("USE_WRITING_AGENT", "true").lower() == "true":
+        print_system("Adding writing agent tools...")
+        # Create output directory for generated articles
+        output_dir = os.path.join(os.getcwd(), "generated_articles")
+        os.makedirs(output_dir, exist_ok=True)
+        writing_tool = WritingTool(llm=llm)
+        tools.append(writing_tool)
+        print_system(f"Added writing agent tool (output directory: {output_dir})")
+
+    # Add Twitter Knowledge Base Tools if enabled
+    if os.getenv("USE_TWITTER_KNOWLEDGE_BASE", "true").lower() == "true" and knowledge_base is not None:
+        tools.append(Tool(
+            name="query_twitter_knowledge_base",
+            description=TWITTER_KNOWLEDGE_BASE_DESCRIPTION,
+            func=lambda query: knowledge_base.query_knowledge_base(query)
+        ))
+
+    # Add Twitter State Management Tools if enabled
+    if os.getenv("USE_TWEET_REPLY_TRACKING", "true").lower() == "true":
+        twitter_state = TwitterState()
+        tools.extend([
+            Tool(
+                name="has_replied_to",
+                func=twitter_state.has_replied_to,
+                description=TWITTER_REPLY_CHECK_DESCRIPTION
+            ),
+            Tool(
+                name="add_replied_to",
+                func=twitter_state.add_replied_tweet,
+                description=TWITTER_ADD_REPLIED_DESCRIPTION
+            )
+        ])
+
+    if os.getenv("USE_TWEET_REPOST_TRACKING", "true").lower() == "true":
+        if not 'twitter_state' in locals():
+            twitter_state = TwitterState()
+        tools.extend([
+            Tool(
+                name="has_reposted",
+                func=twitter_state.has_reposted,
+                description=TWITTER_REPOST_CHECK_DESCRIPTION
+            ),
+            Tool(
+                name="add_reposted",
+                func=twitter_state.add_reposted_tweet,
+                description=TWITTER_ADD_REPOSTED_DESCRIPTION
+            )
+        ])
+
+    # Initialize Twitter client and add custom Twitter Tools if enabled
+    if os.getenv("USE_TWITTER_CORE", "true").lower() == "true":
+        print_system("Adding custom Twitter tools...")
+        twitter_client = TwitterClient()
+        
+        if os.getenv("USE_TWEET_DELETE", "true").lower() == "true":
+            tools.append(create_delete_tweet_tool())
+            
+        if os.getenv("USE_USER_ID_LOOKUP", "true").lower() == "true":
+            tools.append(create_get_user_id_tool())
+            
+        if os.getenv("USE_USER_TWEETS_LOOKUP", "true").lower() == "true":
+            tools.append(create_get_user_tweets_tool())
+            
+        if os.getenv("USE_RETWEET", "true").lower() == "true":
+            tools.append(create_retweet_tool())
+            
+        print_system("Added custom Twitter tools")
+
+    # Add Podcast Knowledge Base Tools if enabled
+    if os.getenv("USE_PODCAST_KNOWLEDGE_BASE", "true").lower() == "true" and podcast_knowledge_base is not None:
+        tools.append(Tool(
+            name="query_podcast_knowledge_base",
+            func=lambda query: podcast_knowledge_base.format_query_results(
+                podcast_knowledge_base.query_knowledge_base(query)
+            ),
+            description=PODCAST_KNOWLEDGE_BASE_DESCRIPTION
+        ))
+    
+
+    # Add Coinbase AgentKit tools (blockchain/wallet/twitter operations)
+    if os.getenv("USE_COINBASE_TOOLS", "true").lower() == "true":
+        print_system("Adding Coinbase AgentKit tools...")
+        coinbase_tools = get_langchain_tools(agent_kit)
+        tools.extend(coinbase_tools)
+        print_system(f"Added {len(coinbase_tools)} Coinbase tools")
+
+    # Add Hyperbolic tools
+    if os.getenv("USE_HYPERBOLIC_TOOLS", "false").lower() == "true":
+        hyperbolic_agentkit = HyperbolicAgentkitWrapper()
+        hyperbolic_toolkit = HyperbolicToolkit.from_hyperbolic_agentkit_wrapper(hyperbolic_agentkit)
+        tools.extend(hyperbolic_toolkit.get_tools())
+
+    # Add web search if enabled
+    if os.getenv("USE_WEB_SEARCH", "false").lower() == "true":
+        tools.append(DuckDuckGoSearchRun(
+            name="web_search",
+            description=WEB_SEARCH_DESCRIPTION
+        ))
+
+    if os.getenv("USE_REQUEST_TOOLS", "false").lower() == "true":
+        toolkit = RequestsToolkit(
+            requests_wrapper=TextRequestsWrapper(headers={}),
+            allow_dangerous_requests=os.getenv("ALLOW_DANGEROUS_REQUEST", "true").lower() == "true",
+        )
+        tools.extend(toolkit.get_tools())
+
+    return tools
 
 async def initialize_agent():
     """Initialize the agent with tools and configuration."""
@@ -601,7 +406,7 @@ async def initialize_agent():
 
         print_system("Loading character configuration...")
         try:
-            characters = loadCharacters(os.getenv("CHARACTER_FILE", "chainyoda.json"))
+            characters = loadCharacters(os.getenv("CHARACTER_FILE"))
             character = characters[0]  # Use first character if multiple loaded
         except Exception as e:
             print_error(f"Error loading character: {e}")
@@ -611,11 +416,14 @@ async def initialize_agent():
         personality = process_character_config(character)
 
         # Create config first before using 
+        checkpoint_id = str(uuid.uuid4())
         config = {
             "configurable": {
                 "thread_id": f"{character['name']} Agent",
                 "character": character["name"],
                 "recursion_limit": 100,
+                "checkpoint_id": checkpoint_id,
+                "langgraph_checkpoint_id": checkpoint_id,
             },
             "character": {
                 "name": character["name"],
@@ -630,276 +438,218 @@ async def initialize_agent():
             }
         }
 
-        print_system("Initializing Twitter API wrapper...")
-        twitter_api_wrapper = TwitterApiWrapper(config=config)
-        
-        
-        
         print_system("Initializing knowledge bases...")
         knowledge_base = None
         podcast_knowledge_base = None
-        tools = []
 
-        # Twitter Knowledge Base initialization
-        if os.getenv("USE_KNOWLEDGE_BASE", "true").lower() == "true":
-            while True:
-                init_twitter_kb = input("\nDo you want to initialize the Twitter knowledge base? (y/n): ").lower().strip()
-                if init_twitter_kb in ['y', 'n']:
-                    break
-                print("Invalid choice. Please enter 'y' or 'n'.")
-
-            if init_twitter_kb == 'y':
-                try:
-                    knowledge_base = TweetKnowledgeBase()
-                    stats = knowledge_base.get_collection_stats()
-                    print_system(f"Initial Twitter knowledge base stats: {stats}")
-                    
-                    while True:
-                        clear_choice = input("\nDo you want to clear the existing Twitter knowledge base? (y/n): ").lower().strip()
-                        if clear_choice in ['y', 'n']:
-                            break
-                        print("Invalid choice. Please enter 'y' or 'n'.")
-
-                    if clear_choice == 'y':
-                        knowledge_base.clear_collection()
-                        print_system("Knowledge base cleared")
-
-                    while True:
-                        update_choice = input("\nDo you want to update the Twitter knowledge base with KOL tweets? (y/n): ").lower().strip()
-                        if update_choice in ['y', 'n']:
-                            break
-                        print("Invalid choice. Please enter 'y' or 'n'.")
-
-                    if update_choice == 'y':
-                        print_system("Updating knowledge base with KOL tweets...")
-                        await update_knowledge_base(twitter_api_wrapper, knowledge_base, config['character']['kol_list'])
-                        stats = knowledge_base.get_collection_stats()
-                        print_system(f"Updated knowledge base stats: {stats}")
-                except Exception as e:
-                    print_error(f"Error initializing Twitter knowledge base: {e}")
-
-        # Podcast Knowledge Base initialization
-        if os.getenv("USE_PODCAST_KNOWLEDGE_BASE", "true").lower() == "true":
-            while True:
-                init_podcast_kb = input("\nDo you want to initialize the Podcast knowledge base? (y/n): ").lower().strip()
-                if init_podcast_kb in ['y', 'n']:
-                    break
-                print("Invalid choice. Please enter 'y' or 'n'.")
-
-            if init_podcast_kb == 'y':
-                try:
-                    podcast_knowledge_base = PodcastKnowledgeBase()
-                    print_system("Podcast knowledge base initialized successfully")
-                    
-                    while True:
-                        clear_choice = input("\nDo you want to clear the existing podcast knowledge base? (y/n): ").lower().strip()
-                        if clear_choice in ['y', 'n']:
-                            break
-                        print("Invalid choice. Please enter 'y' or 'n'.")
-
-                    if clear_choice == 'y':
-                        podcast_knowledge_base.clear_collection()
-                        print_system("Podcast knowledge base cleared")
-
-                    print_system("Processing podcast transcripts...")
-                    podcast_knowledge_base.process_all_json_files()
-                    stats = podcast_knowledge_base.get_collection_stats()
-                    print_system(f"Podcast knowledge base stats: {stats}")
-                except Exception as e:
-                    print_error(f"Error initializing Podcast knowledge base: {e}")
-
-        # Rest of initialization (tools, etc.)
-        # Reference to original code:
-
+        # Configure Coinbase AgentKit first
+        print_system("Initializing Coinbase AgentKit...")
         wallet_data = None
         if os.path.exists(wallet_data_file):
             with open(wallet_data_file) as f:
                 wallet_data = f.read()
 
-        # Configure CDP Agentkit
-        values = {}
-        if wallet_data is not None:
-            values = {"cdp_wallet_data": wallet_data}
-        
-        agentkit = CdpAgentkitWrapper(**values)
-        
-        # Save wallet data
-        wallet_data = agentkit.export_wallet()
-        with open(wallet_data_file, "w") as f:
-            f.write(wallet_data)
-        # Configure CDP Agentkit
-        values = {}
-        if wallet_data is not None:
-            values = {"cdp_wallet_data": wallet_data}
-        
-        agentkit = CdpAgentkitWrapper(**values)
-        
-        # Save wallet data
-        wallet_data = agentkit.export_wallet()
-        with open(wallet_data_file, "w") as f:
-            f.write(wallet_data)
-
-        # Initialize toolkits and get tools
-        twitter_toolkit = TwitterToolkit.from_twitter_api_wrapper(twitter_api_wrapper)
-        cdp_toolkit = CdpToolkit.from_cdp_agentkit_wrapper(agentkit)
-        hyperbolic_agentkit = HyperbolicAgentkitWrapper()
-        hyperbolic_toolkit = HyperbolicToolkit.from_hyperbolic_agentkit_wrapper(hyperbolic_agentkit)
-
-                # Add enhance query tool
-        tools.append(Tool(
-            name="enhance_query",
-            func=lambda initial_query, query_result: enhance_result(initial_query, query_result, llm),
-            description="Analyze the initial query and its results to generate an enhanced follow-up query. Takes two parameters: initial_query (the original query string) and query_result (the results obtained from that query)."
+        # Configure wallet provider with all available action providers
+        wallet_provider = CdpWalletProvider(CdpWalletProviderConfig(
+            api_key_name=os.getenv("CDP_API_KEY_NAME"),
+            api_key_private=os.getenv("CDP_API_KEY_PRIVATE"),
+            network_id=os.getenv("CDP_NETWORK_ID", "base-mainnet"),
+            wallet_data=wallet_data if wallet_data else None
         ))
 
-        # Create deploy multi-token tool
-        deployMultiTokenTool = CdpTool(
-            name="deploy_multi_token",
-            description=DEPLOY_MULTITOKEN_PROMPT,
-            cdp_agentkit_wrapper=agentkit,
-            args_schema=DeployMultiTokenInput,
-            func=deploy_multi_token,
-        )
-        # Add our custom delete tweet tool
-        delete_tweet_tool = create_delete_tweet_tool(twitter_api_wrapper)
-        get_user_id_tool = create_get_user_id_tool(twitter_api_wrapper)
-        user_tweets_tool = create_get_user_tweets_tool(twitter_api_wrapper)
-        retweet_tool = create_retweet_tool(twitter_api_wrapper)
-
-        # Add request tools
-        toolkit = RequestsToolkit(
-            requests_wrapper=TextRequestsWrapper(headers={}),
-            allow_dangerous_requests=ALLOW_DANGEROUS_REQUEST,
-        )   
-        # # Create knowledge base query tool
-        # query_kb_tool = Tool(
-        #     name="query_knowledge_base",
-        #     func=lambda query: knowledge_base.format_query_results(
-        #         knowledge_base.query_knowledge_base(query)
-        #     ),
-        #     description="Query the knowledge base for relevant tweets about crypto/AI/tech trends. Input should be a search query string."
-        # )
-
-        #         # Create podcast knowledge base query tool
-        # query_podcast_kb_tool = Tool(
-        #     name="
-        # podcast_knowledge_base",
-        #     func=lambda query: podcast_knowledge_base.format_query_results(
-        #         podcast_knowledge_base.query_knowledge_base(query)
-        #     ),
-        #     description="Query the podcast knowledge base for relevant podcast segments about crypto/Web3/gaming. Input should be a search query string."
-        # )
+        # Initialize AgentKit with all action providers
+        agent_kit = AgentKit(AgentKitConfig(
+            wallet_provider=wallet_provider,
+            action_providers=[
+                cdp_api_action_provider(),
+                cdp_wallet_action_provider(),
+                erc20_action_provider(),
+                pyth_action_provider(),
+                wallet_action_provider(),
+                weth_action_provider(),
+                twitter_action_provider(),
+            ]
+        ))
         
-        memory = MemorySaver()
+        # Save wallet data
+        if not wallet_data:
+            wallet_data = json.dumps(wallet_provider.export_wallet().to_dict())
+            with open(wallet_data_file, "w") as f:
+                f.write(wallet_data)
 
-        # Initialize with minimum required tools
-        tools = []
+        # Twitter Knowledge Base initialization
+        while True:
+            init_twitter_kb = input("\nDo you want to initialize the Twitter knowledge base? (y/n): ").lower().strip()
+            if init_twitter_kb in ['y', 'n']:
+                break
+            print("Invalid choice. Please enter 'y' or 'n'.")
 
-        # Knowledge Base Tools
-        if os.getenv("USE_TWITTER_KNOWLEDGE_BASE", "true").lower() == "true" and knowledge_base is not None:
-            tools.append(Tool(
-                name="query_knowledge_base",
-                description="Query the knowledge base for relevant tweets about crypto/AI/tech trends.",
-                func=lambda query: knowledge_base.query_knowledge_base(query)
-            ))
+        if init_twitter_kb == 'y':
+            try:
+                knowledge_base = TweetKnowledgeBase()
+                stats = knowledge_base.get_collection_stats()
+                print_system(f"Initial Twitter knowledge base stats: {stats}")
+                
+                # Initialize Twitter client here, before we need it
+                print_system("\n=== Initializing Twitter Client ===")
+                twitter_client = TwitterClient()
+                print_system("Twitter client initialized successfully")
+                
+                while True:
+                    clear_choice = input("\nDo you want to clear the existing Twitter knowledge base? (y/n): ").lower().strip()
+                    if clear_choice in ['y', 'n']:
+                        break
+                    print("Invalid choice. Please enter 'y' or 'n'.")
 
-        if os.getenv("USE_PODCAST_KNOWLEDGE_BASE", "true").lower() == "true" and podcast_knowledge_base is not None:
-            tools.append(Tool(
-                name="query_podcast_knowledge_base",
-                func=lambda query: podcast_knowledge_base.format_query_results(
-                    podcast_knowledge_base.query_knowledge_base(query)
-                ),
-                description="Query the podcast knowledge base for relevant podcast segments about crypto/Web3/gaming. Input should be a search query string."
-            ))
+                if clear_choice == 'y':
+                    knowledge_base.clear_collection()
+                    print_system("Knowledge base cleared")
 
-        if os.getenv("USE_PODCAST_KNOWLEDGE_BASE", "true").lower() == "true" and podcast_knowledge_base is not None:
-            tools.append(Tool(
-                name="query_podcast_knowledge_base",
-                func=lambda query: podcast_knowledge_base.format_query_results(
-                    podcast_knowledge_base.query_knowledge_base(query)
-                ),
-                description="Query the podcast knowledge base for relevant podcast segments about crypto/Web3/gaming. Input should be a search query string."
-            ))
-            
+                while True:
+                    update_choice = input("\nDo you want to update the Twitter knowledge base with KOL tweets? (y/n): ").lower().strip()
+                    if update_choice in ['y', 'n']:
+                        break
+                    print("Invalid choice. Please enter 'y' or 'n'.")
 
-        # CDP Toolkit Tools
-        if os.getenv("USE_CDP_TOOLS", "false").lower() == "true":
-            tools.extend(cdp_toolkit.get_tools())
+                if update_choice == 'y':
+                    print_system("\n=== Starting Twitter Knowledge Base Update ===")
+                    
+                    # Debug the character config
+                    print_system("Character config structure:")
+                    print_system(f"Config keys: {list(config.keys())}")
+                    print_system(f"Character config keys: {list(config['character'].keys())}")
+                    
+                    # Get and validate KOL list
+                    print_system("\n=== Extracting KOL List ===")
+                    kol_list = config['character'].get('kol_list', [])
+                    
+                    print_system(f"Raw KOL list type: {type(kol_list)}")
+                    print_system(f"Raw KOL list length: {len(kol_list)}")
+                    
+                    if len(kol_list) > 0:
+                        print_system("First KOL entry:")
+                        print_system(json.dumps(kol_list[0], indent=2))
+                    
+                    # Validate the KOL list structure
+                    if not isinstance(kol_list, list):
+                        print_error("KOL list in character config is not a list")
+                        return
+                    
+                    print_system(f"Found {len(kol_list)} KOLs in character config")
+                    
+                    try:
+                        print_system("\n=== Updating Knowledge Base ===")
+                        await update_knowledge_base(
+                            twitter_client=twitter_client,
+                            knowledge_base=knowledge_base,
+                            kol_list=kol_list
+                        )
+                        stats = knowledge_base.get_collection_stats()
+                        print_system(f"Updated knowledge base stats: {stats}")
+                    except Exception as e:
+                        print_error(f"Error updating knowledge base: {str(e)}")
+                        print_error("Debug information:")
+                        print_error(f"KOL list type: {type(kol_list)}")
+                        print_error(f"KOL list length: {len(kol_list)}")
+                        if len(kol_list) > 0:
+                            print_error(f"First two KOL entries:")
+                            print_error(json.dumps(kol_list[:2], indent=2))
+                        import traceback
+                        print_error(f"Full error traceback:\n{traceback.format_exc()}")
+            except Exception as e:
+                print_error(f"Error initializing Twitter knowledge base: {e}")
 
-        # Hyperbolic Toolkit Tools
-        if os.getenv("USE_HYPERBOLIC_TOOLS", "false").lower() == "true":
-            tools.extend(hyperbolic_toolkit.get_tools())
+        # Podcast Knowledge Base initialization
+        while True:
+            init_podcast_kb = input("\nDo you want to initialize the Podcast knowledge base? (y/n): ").lower().strip()
+            if init_podcast_kb in ['y', 'n']:
+                break
+            print("Invalid choice. Please enter 'y' or 'n'.")
 
-        # Twitter Core Tools
-        if os.getenv("USE_TWITTER_CORE", "true").lower() == "true":
-            tools.extend(twitter_toolkit.get_tools())
+        if init_podcast_kb == 'y':
+            try:
+                podcast_knowledge_base = PodcastKnowledgeBase()
+                print_system("Podcast knowledge base initialized successfully")
+                
+                # Get current stats before processing
+                stats = podcast_knowledge_base.get_collection_stats()
+                print_system(f"Current podcast knowledge base stats: {stats}")
+                
+                print_system("Checking for new podcast transcripts...")
+                podcast_knowledge_base.process_all_json_files()
+                
+                # Get updated stats
+                new_stats = podcast_knowledge_base.get_collection_stats()
+                print_system(f"Updated podcast knowledge base stats: {new_stats}")
+                
+                if new_stats["count"] > stats["count"]:
+                    print_system(f"Added {new_stats['count'] - stats['count']} new segments to the knowledge base")
+                else:
+                    print_system("No new segments were added to the knowledge base")
+                    
+            except Exception as e:
+                print_error(f"Error initializing Podcast knowledge base: {e}")
 
-        # Twitter Interaction Tools
-        if os.getenv("USE_TWEET_REPLY_TRACKING", "true").lower() == "true":
-            tools.extend([check_replied_tool, add_replied_tool])
+        # Create tools using the helper function
+        tools = create_agent_tools(llm, knowledge_base, podcast_knowledge_base, agent_kit, config)
 
-        if os.getenv("USE_TWEET_REPOST_TRACKING", "true").lower() == "true":
-            tools.extend([check_reposted_tool, add_reposted_tool])
-
-        if os.getenv("USE_TWEET_DELETE", "true").lower() == "true":
-            tools.append(delete_tweet_tool)
-
-        if os.getenv("USE_USER_ID_LOOKUP", "true").lower() == "true":
-            tools.append(get_user_id_tool)
-
-        if os.getenv("USE_USER_TWEETS_LOOKUP", "true").lower() == "true":
-            tools.append(user_tweets_tool)
-
-        if os.getenv("USE_RETWEET", "true").lower() == "true":
-            tools.append(retweet_tool)
-
-        # Multi-token Deployment Tool
-        if os.getenv("USE_DEPLOY_MULTITOKEN", "false").lower() == "true":
-            tools.append(deployMultiTokenTool)
-
-        # Web Search Tool
-        if os.getenv("USE_WEB_SEARCH", "false").lower() == "true":
-            tools.append(DuckDuckGoSearchRun(
-                name="web_search",
-                description="Search the internet for current information."
-            ))
-
-        # Request Tools
-        if os.getenv("USE_REQUEST_TOOLS", "false").lower() == "true":
-            tools.extend(toolkit.get_tools())
-
-
+        # Add GitHub profile evaluation tool
+        if os.getenv("USE_GITHUB_TOOLS", "true").lower() == "true":
+            try:
+                github_token = os.getenv("GITHUB_TOKEN")
+                if not github_token:
+                    raise ValueError("GitHub token not found. Please set the GITHUB_TOKEN environment variable.")
+                else:
+                    print_system("Initializing GitHub API wrapper...")
+                    github_wrapper = GitHubAPIWrapper(github_token)
+                    print_system("Creating GitHub profile evaluation tool...")
+                    github_tool = create_evaluate_profiles_tool(github_wrapper)
+                    tools.append(github_tool)
+                    print_system("Successfully added GitHub profile evaluation tool")
+            except Exception as e:
+                print_error(f"Error initializing GitHub tools: {str(e)}")
+                print_error("GitHub tools will not be available")
 
         # Create the runnable config with increased recursion limit
-        runnable_config = RunnableConfig(recursion_limit=200)
+        runnable_config = RunnableConfig(
+        recursion_limit=200,
+            configurable={
+                "thread_id": f"{character['name']} Agent",
+                "character": character["name"],
+                "recursion_limit": 100,
+                "langgraph_checkpoint_id": config["configurable"]["langgraph_checkpoint_id"],
+            }
+    )
 
         for tool in tools:
             print_system(tool.name)
+
+        # Initialize memory saver
+        memory = MemorySaver()
 
         return create_react_agent(
             llm,
             tools=tools,
             checkpointer=memory,
             state_modifier=personality,
-        ), config, runnable_config, twitter_api_wrapper, knowledge_base, podcast_knowledge_base
+        ), config, runnable_config
 
     except Exception as e:
         print_error(f"Failed to initialize agent: {e}")
         raise
 
-
 def choose_mode():
     """Choose whether to run in autonomous or chat mode."""
     while True:
         print("\nAvailable modes:")
-        print("1. chat    - Interactive chat mode")
-        print("2. auto    - Autonomous action mode")
+        print("1. Interactive chat mode")
+        print("2. Character Twitter Automation")
 
-        choice = input("\nChoose a mode (enter number or name): ").lower().strip()
-        if choice in ["1", "chat"]:
+        choice = input("\nChoose a mode (enter number): ").lower().strip()
+        if choice in ["1"]:
             return "chat"
-        elif choice in ["2", "auto"]:
-            return "auto"
+        elif choice in ["2"]:
+            return "twitter_automation"
         print("Invalid choice. Please try again.")
 
 async def run_with_progress(func, *args, **kwargs):
@@ -908,20 +658,7 @@ async def run_with_progress(func, *args, **kwargs):
     
     try:
         # Handle both async and sync generators
-        # Handle both async and sync generators
         generator = func(*args, **kwargs)
-        
-        if hasattr(generator, '__aiter__'):  # Check if it's an async generator
-            async for chunk in generator:
-                progress.stop()  # Stop spinner before output
-                yield chunk     # Yield the chunk immediately
-                progress.start()  # Restart spinner while waiting for next chunk
-        else:  # Handle synchronous generators
-            for chunk in generator:
-                progress.stop()
-                yield chunk
-                progress.start()
-            
         
         if hasattr(generator, '__aiter__'):  # Check if it's an async generator
             async for chunk in generator:
@@ -949,8 +686,8 @@ async def run_chat_mode(agent_executor, config, runnable_config):
         recursion_limit=200,
         configurable={
             "thread_id": config["configurable"]["thread_id"],
-            "checkpoint_ns": "chat_mode",
-            "checkpoint_id": str(datetime.now().timestamp())
+            "langgraph_checkpoint_ns": "chat_mode",
+            "langgraph_checkpoint_id": config["configurable"]["langgraph_checkpoint_id"]
         }
     )
     
@@ -970,9 +707,8 @@ async def run_chat_mode(agent_executor, config, runnable_config):
             
             print_system(f"\nStarted at: {datetime.now().strftime('%H:%M:%S')}")
             
-            # Process chunks using the updated runnable_config with async handling
             async for chunk in run_with_progress(
-                agent_executor.astream,  # Use astream instead of stream
+                agent_executor.astream,
                 {"messages": [HumanMessage(content=user_input)]},
                 runnable_config
             ):
@@ -989,11 +725,7 @@ async def run_chat_mode(agent_executor, config, runnable_config):
         except Exception as e:
             print_error(f"Error: {str(e)}")
 
-class AgentExecutionError(Exception):
-    """Custom exception for agent execution errors."""
-    pass
-
-async def run_autonomous_mode(agent_executor, config, runnable_config, twitter_api_wrapper, knowledge_base, podcast_knowledge_base):
+async def run_twitter_automation(agent_executor, config, runnable_config):
     """Run the agent autonomously with specified intervals."""
     print_system(f"Starting autonomous mode as {config['character']['name']}...")
     twitter_state.load()
@@ -1007,8 +739,8 @@ async def run_autonomous_mode(agent_executor, config, runnable_config, twitter_a
         recursion_limit=200,
         configurable={
             "thread_id": config["configurable"]["thread_id"],
-            "checkpoint_ns": "autonomous_mode",
-            "checkpoint_id": str(datetime.now().timestamp())
+            "langgraph_checkpoint_ns": "chat_mode",
+            "langgraph_checkpoint_id": config["configurable"]["langgraph_checkpoint_id"]
         }
     )
     
@@ -1253,12 +985,8 @@ async def run_autonomous_mode(agent_executor, config, runnable_config, twitter_a
 
             print_system(f"Completed cycle. Waiting {MENTION_CHECK_INTERVAL/60} minutes before next check...")
             await asyncio.sleep(MENTION_CHECK_INTERVAL)
-            print_system(f"Completed cycle. Waiting {MENTION_CHECK_INTERVAL/60} minutes before next check...")
-            await asyncio.sleep(MENTION_CHECK_INTERVAL)
 
         except KeyboardInterrupt:
-            print_system("\nSaving state and exiting...")
-            twitter_state.save()
             print_system("\nSaving state and exiting...")
             twitter_state.save()
             sys.exit(0)
@@ -1273,23 +1001,26 @@ async def run_autonomous_mode(agent_executor, config, runnable_config, twitter_a
             print_system("Continuing after error...")
             await asyncio.sleep(MENTION_CHECK_INTERVAL)
 
+
 async def main():
     """Start the chatbot agent."""
     try:
-        agent_executor, config, runnable_config, twitter_api_wrapper, knowledge_base, podcast_knowledge_base = await initialize_agent()
+        agent_executor, config, runnable_config = await initialize_agent()
         mode = choose_mode()
         
         if mode == "chat":
-            await run_chat_mode(agent_executor=agent_executor, config=config, runnable_config=runnable_config)
-        elif mode == "auto":
-            await run_autonomous_mode(
+            await run_chat_mode(
                 agent_executor=agent_executor,
                 config=config,
                 runnable_config=runnable_config,
-                twitter_api_wrapper=twitter_api_wrapper,
-                knowledge_base=knowledge_base,
-                podcast_knowledge_base=podcast_knowledge_base
             )
+        elif mode == "twitter_automation":     
+            await run_twitter_automation(
+                agent_executor=agent_executor,
+                config=config,
+                runnable_config=runnable_config,
+            )
+        
     except Exception as e:
         print_error(f"Failed to initialize agent: {e}")
         sys.exit(1)
@@ -1297,295 +1028,3 @@ async def main():
 if __name__ == "__main__":
     print("Starting Agent...")
     asyncio.run(main())
-
-
-#   "kol_list": [
-#     {
-#       "username": "aixbt_agent",
-#       "user_id": "1852674305517342720"
-#     },
-#     {
-#       "username": "0xMert_",
-#       "user_id": "1309886201944473600"
-#     },
-#     {
-#       "username": "sassal0x",
-#       "user_id": "313724502"
-#     },
-#     {
-#       "username": "jessepollak",
-#       "user_id": "18876842"
-#     },
-#     {
-#       "username": "0xCygaar",
-#       "user_id": "1287576585353039872"
-#     },
-#     {
-#       "username": "iamDCinvestor",
-#       "user_id": "956670268596015105"
-#     },
-#     {
-#       "username": "blknoiz06",
-#       "user_id": "973261472"
-#     },
-#     {
-#       "username": "shawmakesmagic",
-#       "user_id": "1830340867737178112"
-#     },
-#     {
-#       "username": "mteamisloading",
-#       "user_id": "1461735251412193281"
-#     },
-#     {
-#       "username": "cryptopunk7213",
-#       "user_id": "1025381906173583361"
-#     },
-#     {
-#       "username": "stevenyuntcap",
-#       "user_id": "780884633252683780"
-#     },
-#     {
-#       "username": "dabit3",
-#       "user_id": "17189394"
-#     },
-#     {
-#       "username": "gammichan",
-#       "user_id": "905566160044920832"
-#     },
-#     {
-#       "username": "NateGeraci",
-#       "user_id": "522571568"
-#     },
-#     {
-#       "username": "Punk9277",
-#       "user_id": "950486928784228352"
-#     },
-#     {
-#       "username": "S4mmyEth",
-#       "user_id": "223921570"
-#     },
-#     {
-#       "username": "jon_charb",
-#       "user_id": "1484537340412452868"
-#     },
-#     {
-#       "username": "beast_ico",
-#       "user_id": "1499585375534206980"
-#     },
-#     {
-#       "username": "MaxResnick1",
-#       "user_id": "1275877058342682633"
-#     },
-#     {
-#       "username": "0xBreadguy",
-#       "user_id": "1453661470869360643"
-#     },
-#     {
-#       "username": "Austin_Federa",
-#       "user_id": "38055242"
-#     },
-#     {
-#       "username": "balajis",
-#       "user_id": "2178012643"
-#     },
-#     {
-#       "username": "RyanWatkins_",
-#       "user_id": "708805895258574849"
-#     },
-#     {
-#       "username": "JasonYanowitz",
-#       "user_id": "1107518478"
-#     },
-#     {
-#       "username": "HighCoinviction",
-#       "user_id": "1268013291944771584"
-#     },
-#     {
-#       "username": "divine_economy",
-#       "user_id": "1379448557711818759"
-#     },
-#     {
-#       "username": "udiWertheimer",
-#       "user_id": "14527699"
-#     },
-#     {
-#       "username": "0xngmi",
-#       "user_id": "1373304198448709632"
-#     },
-#     {
-#       "username": "OX_DAO",
-#       "user_id": "1471279207095406595"
-#     },
-#     {
-#       "username": "DefiIgnas",
-#       "user_id": "831767219071754240"
-#     },
-#     {
-#       "username": "DeFi_Dad",
-#       "user_id": "991745162274467840"
-#     },
-#     {
-#       "username": "llamaonthebrink",
-#       "user_id": "1276213805580681219"
-#     },
-#     {
-#       "username": "lex_node",
-#       "user_id": "954015928924057601"
-#     },
-#     {
-#       "username": "keoneHD",
-#       "user_id": "19569158"
-#     },
-#     {
-#       "username": "brian_armstrong",
-#       "user_id": "14379660"
-#     },
-#     {
-#       "username": "ryanberckmans",
-#       "user_id": "546460454"
-#     },
-#     {
-#       "username": "KevinWSHPod",
-#       "user_id": "1328652802344833024"
-#     },
-#     {
-#       "username": "DSBatten",
-#       "user_id": "73066647"
-#     },
-#     {
-#       "username": "jerallaire",
-#       "user_id": "2478756618"
-#     },
-#     {
-#       "username": "gakonst",
-#       "user_id": "804029200315334656"
-#     },
-#     {
-#       "username": "sreeramkannan",
-#       "user_id": "2166711024"
-#     },
-#     {
-#       "username": "Rewkang",
-#       "user_id": "1138033434"
-#     },
-#     {
-#       "username": "chainyoda",
-#       "user_id": "112509659"
-#     },
-#     {
-#       "username": "alpha_pls",
-#       "user_id": "1450882486372913152"
-#     },
-#     {
-#       "username": "TimBeiko",
-#       "user_id": "80722677"
-#     },
-#     {
-#       "username": "CampbellJAustin",
-#       "user_id": "1625681692848537603"
-#     },
-#     {
-#       "username": "WazzCrypto",
-#       "user_id": "869659857590288384"
-#     },
-#     {
-#       "username": "templecrash",
-#       "user_id": "2882819127"
-#     },
-#     {
-#       "username": "tarunchitra",
-#       "user_id": "53836928"
-#     },
-#     {
-#       "username": "Narodism",
-#       "user_id": "897198731975680001"
-#     },
-#     {
-#       "username": "SmallCapScience",
-#       "user_id": "1352089119334281216"
-#     },
-#     {
-#       "username": "defi_monk",
-#       "user_id": "1469182121013129223"
-#     },
-#     {
-#       "username": "ChainLinkGod",
-#       "user_id": "1035721495"
-#     },
-#     {
-#       "username": "trentdotsol",
-#       "user_id": "1562178659766751237"
-#     },
-#     {
-#       "username": "armaniferrante",
-#       "user_id": "276810355"
-#     },
-#     {
-#       "username": "Vivek4real_",
-#       "user_id": "851277718368829443"
-#     },
-#     {
-#       "username": "Zagabond",
-#       "user_id": "1423031747432783872"
-#     },
-#     {
-#       "username": "punk9059",
-#       "user_id": "1449164448321605632"
-#     },
-#     {
-#       "username": "dotkrueger",
-#       "user_id": "67469426"
-#     },
-#     {
-#       "username": "fede_intern",
-#       "user_id": "1634677972979310594"
-#     },
-#     {
-#       "username": "VaderResearch",
-#       "user_id": "1416874867086045192"
-#     },
-#     {
-#       "username": "DeeZe",
-#       "user_id": "127646057"
-#     },
-#     {
-#       "username": "LukeYoungblood",
-#       "user_id": "86364019"
-#     },
-#     {
-#       "username": "CryptoKaduna",
-#       "user_id": "1103404363861684236"
-#     },
-#     {
-#       "username": "Shaughnessy119",
-#       "user_id": "2215937899"
-#     },
-#     {
-#       "username": "LucaNetz",
-#       "user_id": "807982663000674305"
-#     },
-#     {
-#       "username": "0xstark",
-#       "user_id": "14053424"
-#     },
-#     {
-#       "username": "DavidFBailey",
-#       "user_id": "30597171"
-#     },
-#     {
-#       "username": "Defi0xJeff",
-#       "user_id": "1460252469745782790"
-#     },
-#     {
-#       "username": "Darrenlautf",
-#       "user_id": "987634087274823680"
-#     },
-#     {
-#       "username": "mdudas",
-#       "user_id": "7184612"
-#     },
-#     {
-#       "username": "dankrad",
-#       "user_id": "115069952"
-#     }
-# ],
