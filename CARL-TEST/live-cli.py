@@ -109,6 +109,8 @@ class AudioLoop:
             )
             if text.lower() == "q":
                 break
+            # Debug: print transcribed text
+            print(f"[DEBUG] Transcribed: {text}")
             # Use send_client_content for text input (correct args)
             await self.session.send_client_content(
                 turns={"role": "user", "parts": [{"text": text or "."}]},
@@ -120,7 +122,9 @@ class AudioLoop:
         ret, frame = cap.read()
         # Check if the frame was read successfully
         if not ret:
+            print("[DEBUG] Camera frame not captured.")
             return None
+        print("[DEBUG] Camera frame captured.")
         # Fix: Convert BGR to RGB color space
         # OpenCV captures in BGR but PIL expects RGB format
         # This prevents the blue tint in the video feed
@@ -142,18 +146,19 @@ class AudioLoop:
         cap = await asyncio.to_thread(
             cv2.VideoCapture, 0
         )  # 0 represents the default camera
-
+        print("[DEBUG] Camera capture started.")
         while True:
             frame = await asyncio.to_thread(self._get_frame, cap)
             if frame is None:
+                print("[DEBUG] No frame to send.")
                 break
-
+            print("[DEBUG] Sending camera frame to out_queue.")
             await asyncio.sleep(1.0)
-
             await self.out_queue.put(frame)
 
         # Release the VideoCapture object
         cap.release()
+        print("[DEBUG] Camera capture released.")
 
     def _get_screen(self):
         sct = mss.mss()
@@ -173,15 +178,16 @@ class AudioLoop:
         return {"mime_type": mime_type, "data": base64.b64encode(image_bytes).decode()}
 
     async def get_screen(self):
-
+        print("[DEBUG] Screen sharing started.")
         while True:
             frame = await asyncio.to_thread(self._get_screen)
             if frame is None:
+                print("[DEBUG] No screen frame to send.")
                 break
-
+            print("[DEBUG] Sending screen frame to out_queue.")
             await asyncio.sleep(1.0)
-
             await self.out_queue.put(frame)
+        print("[DEBUG] Screen sharing stopped.")
 
     async def send_realtime(self):
         while True:
@@ -293,10 +299,43 @@ if __name__ == "__main__":
     parser.add_argument(
         "--mode",
         type=str,
-        default=DEFAULT_MODE,
+        default=None,
         help="pixels to stream from",
         choices=["camera", "screen", "none"],
     )
     args = parser.parse_args()
-    main = AudioLoop(video_mode=args.mode)
+
+    # Interactive CLI select if --mode not provided
+    mode = args.mode
+    if mode is None:
+        print("Select video mode:")
+        print("1) camera (default)")
+        print("2) screen")
+        print("3) none (audio only)")
+        choice = input("Enter choice [1-3]: ").strip()
+        if choice == "2":
+            mode = "screen"
+        elif choice == "3":
+            mode = "none"
+        else:
+            mode = "camera"
+
+    # Add CLI confirmation before accessing camera/mic
+    if mode == "camera":
+        confirm = input("This will access your CAMERA and MICROPHONE. Continue? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            exit(0)
+    elif mode == "none":
+        confirm = input("This will access your MICROPHONE. Continue? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            exit(0)
+    elif mode == "screen":
+        confirm = input("This will access your SCREEN and MICROPHONE. Continue? [y/N]: ").strip().lower()
+        if confirm != "y":
+            print("Aborted.")
+            exit(0)
+
+    main = AudioLoop(video_mode=mode)
     asyncio.run(main.run())
