@@ -8,7 +8,6 @@
 # # The Daily SDK is available at https://github.com/pipecat-ai/pipecat/tree/main
 
 import asyncio
-import os
 import sys
 from datetime import datetime
 
@@ -28,98 +27,15 @@ from pipecat.services.gemini_multimodal_live.gemini import (
 )
 from pipecat.transports.services.daily import DailyParams, DailyTransport
 
+from marketplace import fetch_marketplace_data
+from llm_setup import create_llm_and_context
+
 load_dotenv(override=True)
 
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
 
 
-async def fetch_marketplace_data(
-    function_name, tool_call_id, args, llm, context, result_callback
-):
-    REGION_MAP = {
-        "region-1": "US, North America",
-        # Add more mappings as needed
-    }
-
-    def format_memory(mb):
-        if mb >= 1024 * 1024:
-            return f"{mb / (1024 * 1024):.2f} TB"
-        elif mb >= 1024:
-            return f"{mb / 1024:.2f} GB"
-        else:
-            return f"{mb} MB"
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            url = "https://api.hyperbolic.xyz/v1/marketplace"
-            headers = {"Content-Type": "application/json"}
-            filters = {} if args["filter_type"] == "all" else {"available": True}
-            data = {"filters": filters}
-
-            async with session.post(url, json=data, headers=headers) as response:
-                if response.status == 200:
-                    marketplace_data = await response.json()
-                    available_instances = [
-                        {
-                            # Only mention GPU model, memory, price, location, and availability
-                            # "id": instance["id"],
-                            "gpu_model": instance["hardware"]["gpus"][0]["model"],
-                            "gpu_memory": format_memory(instance["hardware"]["gpus"][0]["ram"]),
-                            "price_per_hour": f"${instance['pricing']['price']['amount'] / 100:.2f}",
-                            "location": REGION_MAP.get(instance["location"]["region"], instance["location"]["region"]),
-                            "available": not instance["reserved"]
-                            and instance["gpus_reserved"] < instance["gpus_total"],
-                        }
-                        for instance in marketplace_data["instances"]
-                        if "gpus" in instance["hardware"]
-                        and instance["hardware"]["gpus"]
-                    ]
-                    await result_callback({"instances": available_instances})
-                else:
-                    await result_callback(
-                        {"error": f"API request failed with status {response.status}"}
-                    )
-        except Exception as e:
-            await result_callback({"error": str(e)})
-
-
-tools = [
-    {
-        "function_declarations": [
-            {
-                "name": "get_available_gpus",
-                "description": "Get the list of available GPU instances in the marketplace",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "filter_type": {
-                            "type": "string",
-                            "enum": ["all", "available_only"],
-                            "description": "Filter type for GPU instances",
-                        }
-                    },
-                    "required": ["filter_type"],
-                },
-            }
-        ]
-    }
-]
-
-system_instruction = """
-You are a helpful assistant for Hyperbolic Labs' GPU Marketplace. You can help users find and understand available GPU instances for rent.
-
-You have access to the marketplace data through the get_available_gpus tool. When users ask about available GPUs, pricing, or specifications, use this tool to get the most current information.
-
-Always be professional and helpful. When listing GPUs:
-1. Mention if the instance is currently available first
-2. Then mention the GPU model, memory, and hourly price
-3. Include the location/region
-
-Encourage users to ask about their use case (e.g., "If you're doing XYZ, I recommend...") and offer expert advice as a pro GPU specialist. If a user describes their workload, suggest the best GPU for their needs and explain why.
-
-If users ask about specific GPU models or price ranges, filter and highlight the relevant options from the data.
-"""
 
 
 async def main():
@@ -134,31 +50,11 @@ async def main():
                 audio_out_enabled=True,
                 vad_enabled=True,
                 vad_audio_passthrough=True,
-                # set stop_secs to something roughly similar to the internal setting
-                # of the Multimodal Live api, just to align events. This doesn't really
-                # matter because we can only use the Multimodal Live API's phrase
-                # endpointing, for now.
                 vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.5)),
             ),
         )
 
-        llm = GeminiMultimodalLiveLLMService(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            system_instruction=system_instruction,
-            tools=tools,
-        )
-
-        llm.register_function("get_available_gpus", fetch_marketplace_data)
-
-        context = OpenAILLMContext(
-            [
-                {
-                    "role": "user",
-                    "content": "Start by greeting me warmly and introducing me to GPU Rentals by Hyperbolic Labs and mention that you can do everything verbally. Encourage me to start by asking available GPU. Also mention that you can help me with my use case and suggest the best GPU for my needs.",
-                }
-            ],
-        )
-        context_aggregator = llm.create_context_aggregator(context)
+        llm, context_aggregator = create_llm_and_context()
 
         pipeline = Pipeline(
             [
