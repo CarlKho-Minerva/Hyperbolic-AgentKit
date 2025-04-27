@@ -62,18 +62,27 @@ async def fetch_marketplace_data(
                     marketplace_data = await response.json()
                     available_instances = [
                         {
-                            # Only mention GPU model, memory, price, location, and availability
-                            # "id": instance["id"],
+                            # Main summary fields for default listing
                             "gpu_model": instance["hardware"]["gpus"][0]["model"],
                             "gpu_memory": format_memory(instance["hardware"]["gpus"][0]["ram"]),
                             "price_per_hour": f"${instance['pricing']['price']['amount'] / 100:.2f}",
                             "location": REGION_MAP.get(instance["location"]["region"], instance["location"]["region"]),
-                            "available": not instance["reserved"]
-                            and instance["gpus_reserved"] < instance["gpus_total"],
+                            "available": not instance["reserved"] and instance["gpus_reserved"] < instance["gpus_total"],
+                            # # All technical details for deep-dive queries
+                            # "id": instance["id"],
+                            # "status": instance.get("status"),
+                            # "hardware": instance.get("hardware"),
+                            # "instances": instance.get("instances"),
+                            # "network": instance.get("network"),
+                            # "gpus_total": instance.get("gpus_total"),
+                            # "gpus_reserved": instance.get("gpus_reserved"),
+                            # "has_persistent_storage": instance.get("has_persistent_storage"),
+                            # "supplier_id": instance.get("supplier_id"),
+                            # "cluster_name": instance.get("cluster_name"),
+                            # "pricing": instance.get("pricing"),
                         }
                         for instance in marketplace_data["instances"]
-                        if "gpus" in instance["hardware"]
-                        and instance["hardware"]["gpus"]
+                        if "gpus" in instance["hardware"] and instance["hardware"]["gpus"]
                     ]
                     await result_callback({"instances": available_instances})
                 else:
@@ -112,11 +121,13 @@ You are a helpful assistant for Hyperbolic Labs' GPU Marketplace. You can help u
 You have access to the marketplace data through the get_available_gpus tool. When users ask about available GPUs, pricing, or specifications, use this tool to get the most current information.
 
 Always be professional and helpful. When listing GPUs:
-1. Mention if the instance is currently available first
-2. Then mention the GPU model, memory, and hourly price
+1. Mention the GPU model, memory, and hourly price
+2. Indicate if the instance is currently available
 3. Include the location/region
 
-Encourage users to ask about their use case (e.g., "If you're doing XYZ, I recommend...") and offer expert advice as a pro GPU specialist. If a user describes their workload, suggest the best GPU for their needs and explain why.
+By default, only mention GPU model, memory, price, location, and availability. If a user wants to learn more about a specific instance, invite them to ask for details using the instance's GPU model or ID. When asked, provide all available technical details (CPU, storage, RAM, network, etc) for that instance in a clear, friendly, and expert manner.
+
+Encourage users to ask about their use case (e.g., 'If you're doing XYZ, I recommend...') and offer expert advice as a pro GPU specialist. If a user describes their workload, suggest the best GPU for their needs and explain why.
 
 If users ask about specific GPU models or price ranges, filter and highlight the relevant options from the data.
 """
