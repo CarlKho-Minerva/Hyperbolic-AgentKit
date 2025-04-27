@@ -109,13 +109,14 @@ tools = [
 system_instruction = """
 You are a helpful assistant for Hyperbolic Labs' GPU Marketplace. You can help users find and understand available GPU instances for rent.
 
-You have access to the marketplace data through the get_available_gpus tool. When users ask about available GPUs, pricing,
-or specifications, use this tool to get the most current information.
+You have access to the marketplace data through the get_available_gpus tool. When users ask about available GPUs, pricing, or specifications, use this tool to get the most current information.
 
 Always be professional and helpful. When listing GPUs:
 1. Mention if the instance is currently available first
 2. Then mention the GPU model, memory, and hourly price
 3. Include the location/region
+
+Encourage users to ask about their use case (e.g., "If you're doing XYZ, I recommend...") and offer expert advice as a pro GPU specialist. If a user describes their workload, suggest the best GPU for their needs and explain why.
 
 If users ask about specific GPU models or price ranges, filter and highlight the relevant options from the data.
 """
@@ -153,7 +154,7 @@ async def main():
             [
                 {
                     "role": "user",
-                    "content": "Start by greeting me warmly and introducing me to GPU Rentals by Hyperbolic Labs and mention that you can do everything verbally. Encourage me to start by asking available GPU.",
+                    "content": "Start by greeting me warmly and introducing me to GPU Rentals by Hyperbolic Labs and mention that you can do everything verbally. Encourage me to start by asking available GPU. Also mention that you can help me with my use case and suggest the best GPU for my needs.",
                 }
             ],
         )
