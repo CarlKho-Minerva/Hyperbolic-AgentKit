@@ -19,6 +19,7 @@ from fastapi import FastAPI
 from loguru import logger
 from runner import configure
 import uvicorn
+from websockets.exceptions import ConnectionClosedError
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -99,7 +100,7 @@ async def main():
             ),
         )
 
-        @transport.event_handler("on_first_participant_joined")
+        @transport.event_handler("on_participant_joined")
         async def on_first_participant_joined(transport, participant):
             await task.queue_frames([context_aggregator.user().get_context_frame()])
             await asyncio.sleep(3)
@@ -110,16 +111,20 @@ async def main():
                 participant["id"], framerate=1, video_source="camera"
             )
 
-
             logger.debug("Unpausing audio and video")
             llm.set_audio_input_paused(False)
             llm.set_video_input_paused(False)
 
-
-
         runner = PipelineRunner()
 
-        await runner.run(task)
+        try:
+            await runner.run(task)
+        except ConnectionClosedError as e:
+            logger.error(f"WebSocket connection closed unexpectedly: {e}")
+            logger.error("This might be a temporary issue with the Gemini service. Please try running the script again later.")
+        except Exception as e:
+            logger.error(f"An unexpected error occurred: {e}")
+            # Optionally re-raise or handle other errors as needed
 
 
 def start_healthcheck_server():
