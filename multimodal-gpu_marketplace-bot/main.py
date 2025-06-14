@@ -10,15 +10,12 @@
 import asyncio
 import os
 import sys
-import threading
 from datetime import datetime
 
 import aiohttp
 from dotenv import load_dotenv
-from fastapi import FastAPI
 from loguru import logger
 from runner import configure
-import uvicorn
 from websockets.exceptions import ConnectionClosedError
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -125,22 +122,6 @@ async def main():
             logger.info("Pipeline task timed out after 1 hour.")
         except Exception as e:
             logger.error(f"An unexpected error occurred: {e}")
-
-
-def start_healthcheck_server():
-    app = FastAPI()
-
-    @app.get("/healthz")
-    async def healthz():
-        return {"status": "ok"}
-
-    uvicorn.run(
-        app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), log_level="warning"
-    )
-
-
-# Start FastAPI health check server in a background thread
-threading.Thread(target=start_healthcheck_server, daemon=True).start()
 
 
 if __name__ == "__main__":
