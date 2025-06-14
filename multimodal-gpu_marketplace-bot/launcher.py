@@ -3,6 +3,7 @@ import threading
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import uvicorn
+import os
 from loguru import logger
 
 # We will import your bot's main function
