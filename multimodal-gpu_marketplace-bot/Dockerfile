@@ -28,4 +28,4 @@ COPY . .
 EXPOSE 8080
 
 # The command to run your application
-CMD ["python", "main.py"]
+CMD ["python", "launcher.py"]

@@ -121,10 +121,10 @@ async def main():
             await runner.run(task)
         except ConnectionClosedError as e:
             logger.error(f"WebSocket connection closed unexpectedly: {e}")
-            logger.error("This might be a temporary issue with the Gemini service. Please try running the script again later.")
+        except TimeoutError:
+            logger.info("Pipeline task timed out after 1 hour.")
         except Exception as e:
             logger.error(f"An unexpected error occurred: {e}")
-            # Optionally re-raise or handle other errors as needed
 
 
 def start_healthcheck_server():
@@ -134,7 +134,10 @@ def start_healthcheck_server():
     async def healthz():
         return {"status": "ok"}
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), log_level="warning")
+    uvicorn.run(
+        app, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)), log_level="warning"
+    )
+
 
 # Start FastAPI health check server in a background thread
 threading.Thread(target=start_healthcheck_server, daemon=True).start()
