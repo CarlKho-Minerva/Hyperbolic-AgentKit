@@ -1,24 +1,22 @@
-import asyncio
-import threading
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
-import uvicorn
+# launcher.py
 import os
+import subprocess
+import sys
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
 from loguru import logger
-
-# We will import your bot's main function
-from main import main as run_bot_pipeline
-
-# Keep track of the bot's thread so we only run one at a time
-bot_thread = None
 
 app = FastAPI()
 
+# Get the URL from environment variables to pass to the frontend
+DAILY_ROOM_URL = "https://hyperbolic.daily.co/MkJPeAMVfgruvM1zVGg4"
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Serves the simple HTML page with the start button."""
-    return """
+    # We will now pass the room URL to the HTML so the button can open it.
+    return f"""
     <!DOCTYPE html>
     <html lang="en">
     <head>
@@ -26,64 +24,84 @@ async def root():
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Hyperbolic Bot Launcher</title>
         <style>
-            body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f5f5f5; }
-            .container { text-align: center; }
-            button { font-size: 1.5rem; padding: 15px 30px; cursor: pointer; border-radius: 8px; border: none; background-color: #007bff; color: white; }
-            p { margin-top: 20px; color: #666; }
+            body {{ font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background-color: #f5f5f5; }}
+            .container {{ text-align: center; }}
+            button {{ font-size: 1.5rem; padding: 15px 30px; cursor: pointer; border-radius: 8px; border: none; background-color: #007bff; color: white; }}
+            button:disabled {{ background-color: #cccccc; }}
+            p {{ margin-top: 20px; color: #666; }}
+            a {{ color: #007bff; text-decoration: none; font-weight: bold; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>GPU Marketplace Voice Assistant</h1>
-            <form action="/start-bot" method="post">
-                <button type="submit">Click to Start Demo Bot</button>
-            </form>
+            <button id="startButton">Click to Start Demo Bot</button>
             <p id="status"></p>
         </div>
         <script>
-            const form = document.querySelector('form');
+            const startButton = document.getElementById('startButton');
             const status = document.getElementById('status');
-            form.addEventListener('submit', function(e) {
-                e.preventDefault();
-                status.textContent = 'Starting bot... Please join the Daily room in a moment.';
-                fetch('/start-bot', { method: 'POST' })
+            const roomUrl = "{DAILY_ROOM_URL}";
+
+            startButton.addEventListener('click', function() {{
+                startButton.disabled = true;
+                status.innerHTML = 'Starting bot... This may take a moment. <br>The bot will join the Daily room automatically.';
+
+                fetch('/start-bot', {{ method: 'POST' }})
                     .then(response => response.json())
-                    .then(data => {
-                        status.textContent = data.message;
-                    });
-                form.querySelector('button').disabled = true;
-            });
+                    .then(data => {{
+                        if (data.success) {{
+                            status.innerHTML = `Bot is starting! <br> <a href="${{roomUrl}}" target="_blank">Click here to join the Daily room.</a>`;
+                            // The bot will stop on its own after being idle.
+                        }} else {{
+                            status.textContent = `Error: ${{data.message}}`;
+                            startButton.disabled = false;
+                        }}
+                    }})
+                    .catch(err => {{
+                        status.textContent = 'Failed to start the bot. Please check server logs.';
+                        startButton.disabled = false;
+                    }});
+            }});
         </script>
     </body>
     </html>
     """
 
-
-def run_bot_in_thread():
-    """Runs the asyncio bot in a separate thread."""
-    logger.info("Starting bot pipeline in a background thread.")
-    try:
-        asyncio.run(run_bot_pipeline())
-        logger.info("Bot pipeline thread finished.")
-    except Exception as e:
-        logger.error(f"Error in bot thread: {e}")
-
+# Variable to track if the bot process is running
+bot_process = None
 
 @app.post("/start-bot")
 async def start_bot_endpoint():
-    """API endpoint to start the bot."""
-    global bot_thread
-    if bot_thread and bot_thread.is_alive():
-        return {"message": "Bot is already running."}
+    """API endpoint to launch the bot script as a separate process."""
+    global bot_process
 
-    # Run the main bot function in a background thread
-    bot_thread = threading.Thread(target=run_bot_in_thread)
-    bot_thread.start()
+    # Check if the bot process is already running
+    if bot_process and bot_process.poll() is None:
+        logger.info("Bot process is already running.")
+        return JSONResponse({"success": False, "message": "Bot is already running."})
 
-    return {"message": "Bot has been started. It will join the Daily room shortly."}
+    try:
+        # Find the path to the main.py script
+        script_path = os.path.join(os.path.dirname(__file__), "main.py")
+
+        # We need to use the same Python interpreter that is running this launcher
+        python_executable = sys.executable
+
+        logger.info(f"Launching bot script: {python_executable} {script_path}")
+
+        # Launch main.py as a new, independent process
+        # This completely avoids threading/multiprocessing issues with asyncio
+        bot_process = subprocess.Popen([python_executable, script_path])
+
+        return JSONResponse({"success": True, "message": "Bot started successfully."})
+
+    except Exception as e:
+        logger.error(f"Failed to launch bot process: {e}")
+        return JSONResponse({"success": False, "message": f"Failed to start bot: {e}"}, status_code=500)
 
 
 if __name__ == "__main__":
-    # Note: Use the port Render provides through the PORT environment variable.
     port = int(os.environ.get("PORT", 8080))
+    logger.info(f"Starting launcher web server on port {port}")
     uvicorn.run(app, host="0.0.0.0", port=port)
